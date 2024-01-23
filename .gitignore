@@ -3,3 +3,4 @@ Manifest.toml
 *.vtu
 *.vtk
 # *.msh
+references
