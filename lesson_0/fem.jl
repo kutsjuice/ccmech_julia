@@ -4,7 +4,7 @@ tcf(filename::String) = (@__DIR__) * "\\" * filename;
 
 H = 1;
 W = 1;
-num = 100;
+num = 30;
 
 x = LinRange(0, W, num);
 y = LinRange(0, H, num);
