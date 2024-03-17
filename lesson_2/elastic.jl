@@ -37,17 +37,18 @@ end
 function voigtstrain(∇u)
     ε_x = ∇u[1,1];
     ε_y = ∇u[2,2];
-    γ_xy =  ∇u[1,2] + ∇u[2,1];
+    γ_xy = ∇u[1,2] + ∇u[2,1];
 
     return VectorValue(ε_x, ε_y, γ_xy);
 end
 
 function voigtstress(ε)
-    σ_x = mA[1,1] * ε[1] + mA[1,2] * ε[2] + mA[1,3] * ε[3];
-    σ_y = mA[2,1] * ε[1] + mA[2,2] * ε[2] + mA[2,3] * ε[3];
-    τ_xy = mA[3,1] * ε[1] + mA[3,2] * ε[2] + mA[3,3] * ε[3];
+    σ_x = mE[1,1] * ε[1] + mE[1,2] * ε[2] + mE[1,3] * ε[3];
+    σ_y = mE[2,1] * ε[1] + mE[2,2] * ε[2] + mE[2,3] * ε[3];
+    τ_xy = mE[3,1] * ε[1] + mE[3,2] * ε[2] + mE[3,3] * ε[3];
     return VectorValue(σ_x, σ_y, τ_xy);
 end
+
 ϵ(u) = Operation(voigtstrain)(∇(u))
 σ(u) = Operation(voigtstress)(ϵ(u))
 
