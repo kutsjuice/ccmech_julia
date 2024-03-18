@@ -1,12 +1,18 @@
 using WriteVTK
 using LinearAlgebra
 using SparseArrays
+using IterativeSolvers
+using PyPlot
+
+remove(a, b) = findall(!in(b), a)
+findin(a, b) = findall(in(b), a)
+
 
 tcf(filename::String) = (@__DIR__) * "\\" * filename;
 
 H = 1;
 W = 1;
-num = 100;
+num = 50;
 
 x = LinRange(0, W, num);
 y = LinRange(0, H, num);
@@ -112,58 +118,175 @@ for el in eachcol(connections)
     inds = [2*el[1]-1, 2*el[1], 2*el[2]-1, 2*el[2], 2*el[3]-1, 2*el[3] ]
     mK[inds, inds] += mKloc;
 end
-# rank(mK)
+rank(mK)
 
 
 fixed = findall(points[1,:] .== 0)
 loaded = findall(points[1,:] .== 1)
 
+function applydirichelet!(mK::AbstractMatrix{<:Number}, vF::AbstractVector{<:Number},indices::AbstractVector{<:Integer}, dirsmask::BitVector, func::Function, points::AbstractMatrix{<:Number})
+    dims = size(dirsmask,1);
+    dirs = findall(dirsmask);
+    for ind in indices
+        
+        p = points[:, ind];
+        dofsvalue = func(p);
 
-function applydirichelet!(mK::AbstractMatrix{<:Number}, vF::AbstractVector{<:Number},ind::AbstractVector{<:Integer}, dirs::BitVector, func::Function, points::AbstractMatrix{<:Numbers})
-    m = size(dofs,1);
-    for (i,s) in dirs
-        if s 
-            for j in ind
-                p = points[:, j];
-                mK[m*j - 3 + i, m*j - 3 + i] = 1;
-
-                vF[m*j - 3 + i] = 2*func(p)[i];
-                
-                for k in eachindex(vF)
-                    if mK[m*j - 3 + i, k] != 0
-                        vF[k] -= func(p)[i] * mK[m*j - 3 + i, k];
+        for dir in dirs
+            dof = dims*(ind-1) + dir;            
+            mK[dof, dof] = 1;
+            vF[dof] = dofsvalue[dir];
+            
+            for k in eachindex(vF)
+                if dof != k
+                    if mK[dof, k] != 0
+                        vF[k] -= dofsvalue[dir] * mK[dof, k];
+                        mK[dof,k] = mK[k, dof] = 0;
                     end
-                end 
+                end
             end
-        end
+        end 
     end
 
 end
+# function applydirichelet!(mK, vF, dofs, value)
+    
+#     for dof in dofs
+#         for 
+#     end
+# end
 
-for p in fixed
-    mK[2p, 2p] += 1e16;
-    mK[2p-1, 2p-1] += 1e16;
+
+
+f(p) = [0,0,0];
+applydirichelet!(mK, vF, fixed, BitVector([1,1]), f, points)
+rank(mK)
+
+
+function applyMPC(  
+            mK::AbstractMatrix{<:Number}, 
+            vF::AbstractVector{<:Number}, 
+            primary_dofs::AbstractVector{<:Integer}, 
+            secondary_dofs::AbstractVector{<:Integer}, 
+            koefs::AbstractVector{<:Number}, 
+            offset::AbstractVector{<:Number}
+        )
+
+    @assert size(primary_dofs, 1) == size(secondary_dofs,1)
+    @assert size(primary_dofs, 1) == size(koefs,  1)
+    @assert size(primary_dofs, 1) == size(offset, 1)
+    
+    n = size(vF, 1);
+    m = n - size(secondary_dofs, 1);
+    uncommitted = remove(1:n, [primary_dofs;secondary_dofs]);
+    uncommitted_and_primary = remove(1:n, secondary_dofs);
+
+    new_primary = findall(in(primary_dofs), uncommitted_and_primary)
+    new_uncommitted = findall(in(uncommitted), uncommitted_and_primary);
+
+    mT = spzeros(n,m);
+    vG = spzeros(n);
+    for (j,i) in enumerate(uncommitted_and_primary)
+        mT[i,j] = 1;
+    end
+    for el in eachindex(primary_dofs)
+        i = secondary_dofs[el];
+        j = new_primary[el];
+        mT[i,j] = koefs[el];
+        vG[i] = offset[el];
+    end
+    vFnew = mT' * (vF - mK * vG) 
+    mKnew = mT' * mK * mT;
+
+    return (mKnew,vFnew, uncommitted_and_primary, new_primary, mT)
 end
 
-# rank(mK)
+const EPS = 1e-6
+
+isupper(p) = abs(p[2] - H) < EPS;
+islower(p) = abs(p[2]) < EPS;
+
+
+function finddofs(points::AbstractMatrix{<:Number}, condition::Function, number_of_directions::Integer)
+    indices = findall(condition.(eachcol(points)));
+    dofs = Vector{Int64}(undef, size(indices, 1) * number_of_directions);
+    k = 0;
+    for ind in indices
+        for direction in 1:number_of_directions
+            k += 1; 
+            dofs[k] = number_of_directions*(ind-1) + direction;
+        end
+    end
+    return dofs
+end
+
+upper_dofs = finddofs(points, isupper, 2) 
+lower_dofs = finddofs(points, islower, 2)
+
+upper_dofs
+findall(points[2, :] .== 1)
 
 for p in loaded
     vF[2p] = 100;
 end
-using IterativeSolvers
-using LinearAlgebra
 
-δ = cg(mK,vF)
+mKn,vFn, uncommitted_and_primary, new_primary, mT = applyMPC(mK, vF, upper_dofs, lower_dofs, ones(size(lower_dofs)), zeros(size(lower_dofs)))
+
+# uncommitted_and_primary
+# fixed
+
+
+# function applydirichelet!(mK, vF, old_dofs, uncommitted_and_primary, primary, secondary, value) 
+#     new_dofs = findall(in(uncommitted_and_primary), old_dofs)
+#     for dof in new_dofs
+        
+#     end 
+# end
+
+# fixed_dofs = Vector{Int64}(undef, size(fixed,1)*2)
+# for i in eachindex(fixed)
+#     fixed_dofs[2i-1] = fixed[i]*2 - 1; 
+#     fixed_dofs[2i] = fixed[i]*2 
+# end 
+# fixed_dofs
+
+
+
+
+# res = qr(mKn)
+
+δn = cg(mKn,vFn)
+
+δ = Vector{Float64}(undef, size(vF))
+δ[uncommitted_and_primary] = δn;
+δ[lower_dofs] = δn[new_primary]
 
 stresses = Matrix{Float64}(undef, 3, length(cells))
 for i in 1:size(connections,2)
     stresses[:, i] = stress(points[:, connections[:,i]], reshape(δ, 2, num^2)[:, connections[:,i]]);
 end
 
-vtk_grid(filename, points, cells) do vtk
+vtk_grid(filename*"2", points, cells) do vtk
 
     disps = zeros(3, num^2);
     disps[1:2,:] = reshape(δ, 2, num^2)
     vtk["disps"] = disps;
     vtk["stress"] = stresses;
 end
+
+
+
+
+
+# all_dofs = collect(1:10)
+
+# pr_dofs = [3,4]
+# sn_dofs = [1,2]
+
+# un_dofs = remove(all_dofs, [pr_dofs;sn_dofs])
+
+# un_pr_dofs = remove(all_dofs, sn_dofs)
+# pr_new_dofs = findall(in(pr_dofs), un_pr_dofs)
+
+
+# un_new_dofs = findall(in(un_dofs), un_pr_dofs)
