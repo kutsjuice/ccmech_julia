@@ -47,14 +47,21 @@ colors4 = [gmsh.model.getColor(plane...) for plane in gmsh.model.getEntities(2)]
 
 
 
-d3 = gmsh.model.getEntities(2)
-gmsh.model.addPhysicalGroup(2, [d3[1][2]], -1, "down1")
-gmsh.model.addPhysicalGroup(2, [d3[3][2]], -1, "down2")
+d2 = gmsh.model.getEntities(2)
+gmsh.model.addPhysicalGroup(2, [d2[1][2]], -1, "down1")
+gmsh.model.addPhysicalGroup(2, [d2[3][2]], -1, "down2")
+
+gmsh.model.addPhysicalGroup(2, [d2[13][2]], -1, "up1")
+gmsh.model.addPhysicalGroup(2, [d2[15][2]], -1, "up2")
+
+d3 = gmsh.model.getEntities(3)
+gmsh.model.addPhysicalGroup(3, [d3[1][2]], -1, "down")
+gmsh.model.addPhysicalGroup(3, [d2[2][2]], -1, "up")
 gmsh.model.occ.synchronize()
 
 
 gmsh.model.mesh.generate(3)
-msh_file = "model.msh" |> tcf;
+msh_file = "Down.msh" |> tcf;
 gmsh.write(msh_file)
 
 # gmsh.fltk.run()
@@ -67,5 +74,32 @@ using GridapGmsh
 
 model = GmshDiscreteModel(msh_file);
 
-vtk_file = "model" |> tcf;
+vtk_file = "model_balka" |> tcf;
+writevtk(model, vtk_file);
+
+
+##
+tcf(filename::String) = (@__DIR__) * "\\" * filename;
+using Gmsh
+
+msh_file = "Down.msh" |> tcf;
+gmsh.write(msh_file)
+
+using Gridap
+using GridapGmsh
+
+model = GmshDiscreteModel(msh_file);
+
+vtk_file = "model_balka_Down" |> tcf;
+writevtk(model, vtk_file);
+
+##перезапустить REPL
+tcf(filename::String) = (@__DIR__) * "\\" * filename;
+using Gmsh
+using Gridap
+using GridapGmsh
+msh_file2 = "Up.msh" |> tcf;
+gmsh.write(msh_file2)
+model = GmshDiscreteModel(msh_file2);
+vtk_file = "model_balka_Up" |> tcf;
 writevtk(model, vtk_file);
