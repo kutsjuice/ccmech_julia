@@ -36,9 +36,6 @@ v = gmsh.model.occ.importShapes(path)
 #xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.occ.getBoundingBox(
  #   v[1][1], v[1][2])
 
-
-
-
 gmsh.model.occ.synchronize()
 for plane in gmsh.model.getEntities(2)
     println(gmsh.model.getColor(plane...))
