@@ -1,18 +1,20 @@
 using WriteVTK
 using LinearAlgebra
 using SparseArrays
-using IterativeSolvers
-using PyPlot
+using LinearSolve
+# using IterativeSolvers
+# using PyPlot
 
-remove(a, b) = findall(!in(b), a)
-findin(a, b) = findall(in(b), a)
+remove(a, b) = a[findall(!in(b), a)]
+findin(a, b) = a[findall(in(b), a)]
 
+ω = 1e17;
 
 tcf(filename::String) = (@__DIR__) * "\\" * filename;
 
 H = 1;
 W = 1;
-num = 50;
+num = 51;
 
 x = LinRange(0, W, num);
 y = LinRange(0, H, num);
@@ -42,27 +44,52 @@ filename = "geo" |> tcf
 vtk_grid(filename, points, cells) do vtk
 end
 
-const E = 2.1e11
-const ν = 0.3
+Em = 5.0e10
+Er = 2.1e11
+ν_m = 0.45
+ν_r = 0.3
 
 # Model
 flag = 1;
-k1 = ν/(1-ν);
-k2 = 0.5*(1-2ν)/(1-ν);
-k3 = (1-ν)/2;
 
-plain_stress = true;
+function buildelasticitymatrix(E, ν)
+    k1 = ν/(1-ν);
+    k2 = 0.5*(1-2ν)/(1-ν);
+    k3 = (1-ν)/2;
 
-mE = E/(1-ν^2)* [
-    1  ν  0;
-    ν  1  0;
-    0  0 k3;
-];
+    return E/(1-ν^2)* [
+        1  ν  0;
+        ν  1  0;
+        0  0 k3;
+    ]
+end
+
+mEm = buildelasticitymatrix(Em, ν_m);
+mEr = buildelasticitymatrix(Er, ν_r);
+
+
+r_bounds = [0.3 0.7]
+
+
+function defineElasticityMatrix(pts)
+    if (all(pts[1, :] .>= (r_bounds[1] - 1e-4)) 
+        && all(pts[1, :] .<= (r_bounds[2] + 1e-4))
+        && all(pts[2, :] .>= (r_bounds[1] - 1e-4))
+        && all(pts[2, :] .<= (r_bounds[2] + 1e-4))
+        )
+        return mEr;
+    else
+        return mEm;
+    end
+end
+
 
 
 function calcMKLocal(pts::Matrix{Float64})::Matrix{Float64}
     mB = Matrix{Float64}(undef, 3,6);
     ijk = [1,2,3];
+
+
     for _ in eachindex(pts)
         i,j,k = ijk;
         circshift!(ijk,1)
@@ -81,6 +108,8 @@ function calcMKLocal(pts::Matrix{Float64})::Matrix{Float64}
         1 pts[1,3] pts[2, 3];
         ]); 
     mB /= Δ2;
+    mE = defineElasticityMatrix(pts)
+
     mKloc = mB' * mE * mB * Δ2/2;
     return mKloc;
 end
@@ -106,12 +135,20 @@ function stress(pts::AbstractMatrix{<:Real}, disps::AbstractMatrix{<:Real})::Vec
         1 pts[1,3] pts[2, 3];
         ]); 
     mB /= Δ2;
+    mE = defineElasticityMatrix(pts)
     σ = (mE * mB * reshape(disps, 6, 1))[:];
     return σ
 end
 
-mK = spzeros(num^2 * 2, num^2 * 2);
-vF = spzeros(num^2 * 2);
+if num < 20
+    mK = zeros(num^2 * 2, num^2 * 2);
+    vF = zeros(num^2 * 2);
+    USING_SPARSE = false;
+else 
+    mK = spzeros(num^2 * 2, num^2 * 2);
+    vF = spzeros(num^2 * 2);
+    USING_SPARSE = true;
+end
 
 for el in eachcol(connections)
     mKloc = calcMKLocal(points[:, el]);
@@ -121,10 +158,20 @@ end
 rank(mK)
 
 
-fixed = findall(points[1,:] .== 0)
-loaded = findall(points[1,:] .== 1)
+fixed = findall((points[1,:] .≈ 0.5) 
+                .&& (points[2,:] .≈ 0.5))
+loaded = Vector{Int64}([])
 
-function applydirichelet!(mK::AbstractMatrix{<:Number}, vF::AbstractVector{<:Number},indices::AbstractVector{<:Integer}, dirsmask::BitVector, func::Function, points::AbstractMatrix{<:Number})
+
+function applydirichelet!(
+                mK::AbstractMatrix{<:Number}, 
+                vF::AbstractVector{<:Number},
+                indices::AbstractVector{<:Integer}, 
+                dirsmask::BitVector, 
+                func::Function, 
+                points::AbstractMatrix{<:Number}
+                )
+
     dims = size(dirsmask,1);
     dirs = findall(dirsmask);
     for ind in indices
@@ -134,36 +181,28 @@ function applydirichelet!(mK::AbstractMatrix{<:Number}, vF::AbstractVector{<:Num
 
         for dir in dirs
             dof = dims*(ind-1) + dir;            
-            mK[dof, dof] = 1;
-            vF[dof] = dofsvalue[dir];
+            mK[dof, dof] += ω;
+            vF[dof] = ω*dofsvalue[dir];
             
-            for k in eachindex(vF)
-                if dof != k
-                    if mK[dof, k] != 0
-                        vF[k] -= dofsvalue[dir] * mK[dof, k];
-                        mK[dof,k] = mK[k, dof] = 0;
-                    end
-                end
-            end
         end 
     end
 
 end
-# function applydirichelet!(mK, vF, dofs, value)
-    
-#     for dof in dofs
-#         for 
-#     end
-# end
 
+rank(mK)
 
-
-f(p) = [0,0,0];
+f(p) = [0,0];
 applydirichelet!(mK, vF, fixed, BitVector([1,1]), f, points)
+mK
+if USING_SPARSE
+    droptol!(mK, 1e-3)
+end
+mK
 rank(mK)
 
 
-function applyMPC(  
+
+function applyMPC!(  
             mK::AbstractMatrix{<:Number}, 
             vF::AbstractVector{<:Number}, 
             primary_dofs::AbstractVector{<:Integer}, 
@@ -171,40 +210,37 @@ function applyMPC(
             koefs::AbstractVector{<:Number}, 
             offset::AbstractVector{<:Number}
         )
-
+    # sec[i] = prim[i] * koef[i] + offs[i]
+    # 1 * s - k * p = o
+    # 
+    # | 1  -k | =  1*o
+    # |-k  k^2| = -k*o
     @assert size(primary_dofs, 1) == size(secondary_dofs,1)
     @assert size(primary_dofs, 1) == size(koefs,  1)
     @assert size(primary_dofs, 1) == size(offset, 1)
     
-    n = size(vF, 1);
-    m = n - size(secondary_dofs, 1);
-    uncommitted = remove(1:n, [primary_dofs;secondary_dofs]);
-    uncommitted_and_primary = remove(1:n, secondary_dofs);
 
-    new_primary = findall(in(primary_dofs), uncommitted_and_primary)
-    new_uncommitted = findall(in(uncommitted), uncommitted_and_primary);
-
-    mT = spzeros(n,m);
-    vG = spzeros(n);
-    for (j,i) in enumerate(uncommitted_and_primary)
-        mT[i,j] = 1;
-    end
     for el in eachindex(primary_dofs)
         i = secondary_dofs[el];
-        j = new_primary[el];
-        mT[i,j] = koefs[el];
-        vG[i] = offset[el];
-    end
-    vFnew = mT' * (vF - mK * vG) 
-    mKnew = mT' * mK * mT;
+        j = primary_dofs[el];
+        mW = [
+            1 -koeffs[el];
+            -koeffs[el] koeffs[el]^2
+        ] * ω;
 
-    return (mKnew,vFnew, uncommitted_and_primary, new_primary, mT)
+        mK[[i,j],[i,j]] += mW;
+        vF[[i,j]] += offset[el] * [1 , -koeffs[el]] * ω;
+    end
+
 end
 
 const EPS = 1e-6
 
 isupper(p) = abs(p[2] - H) < EPS;
 islower(p) = abs(p[2]) < EPS;
+leftbound(p) = isapprox(p[1], 0; atol = 1e-3)
+rightbound(p) = isapprox(p[1], 1; atol = 1e-3)
+
 
 
 function finddofs(points::AbstractMatrix{<:Number}, condition::Function, number_of_directions::Integer)
@@ -220,73 +256,86 @@ function finddofs(points::AbstractMatrix{<:Number}, condition::Function, number_
     return dofs
 end
 
-upper_dofs = finddofs(points, isupper, 2) 
-lower_dofs = finddofs(points, islower, 2)
+upper_dofs = finddofs(points, isupper, 2); 
+lower_dofs = finddofs(points, islower, 2);
+left_dofs = finddofs(points, leftbound, 2);
+right_dofs = finddofs(points, rightbound, 2);
 
-upper_dofs
-findall(points[2, :] .== 1)
 
-for p in loaded
-    vF[2p] = 100;
+# upper_dofs' 
+# lower_dofs'
+# left_dofs'
+# right_dofs' 
+
+
+
+left_dofs = remove(left_dofs, upper_dofs); left_dofs = remove(left_dofs, lower_dofs);
+right_dofs = remove(right_dofs, lower_dofs); right_dofs = remove(right_dofs,  upper_dofs);
+# upper_dofs'
+# lower_dofs'
+
+
+up_lo_offsets = zeros(size(lower_dofs))
+for (i, dof) in enumerate(lower_dofs)
+    if ((dof+1) % 2) == 0
+        up_lo_offsets[i] = 0.1
+    end
 end
 
-mKn,vFn, uncommitted_and_primary, new_primary, mT = applyMPC(mK, vF, upper_dofs, lower_dofs, ones(size(lower_dofs)), zeros(size(lower_dofs)))
+le_ri_offsets = zeros(size(left_dofs))
 
-# uncommitted_and_primary
-# fixed
+primary_dofs = [upper_dofs; left_dofs]
+secondary_dofs = [lower_dofs; right_dofs]
+offsets = [up_lo_offsets; le_ri_offsets]
+up_lo_koeffs = ones(length(lower_dofs));
+le_ri_koeffs = ones(length(left_dofs));
+koeffs = ones(length(primary_dofs))
 
+points[:,((primary_dofs.+1) .÷2)]
 
-# function applydirichelet!(mK, vF, old_dofs, uncommitted_and_primary, primary, secondary, value) 
-#     new_dofs = findall(in(uncommitted_and_primary), old_dofs)
-#     for dof in new_dofs
-        
-#     end 
-# end
-
-# fixed_dofs = Vector{Int64}(undef, size(fixed,1)*2)
-# for i in eachindex(fixed)
-#     fixed_dofs[2i-1] = fixed[i]*2 - 1; 
-#     fixed_dofs[2i] = fixed[i]*2 
-# end 
-# fixed_dofs
+offsets'
 
 
+findin(primary_dofs, secondary_dofs)
+secondary_dofs'
+applyMPC!(mK, vF, primary_dofs, secondary_dofs, koeffs, offsets);
+
+using LinearSolve
+
+prob = LinearProblem(mK, vF)
+sol = solve(prob)
+
+δ = sol.u
+
+# fac = qr(mK)
 
 
-# res = qr(mKn)
 
-δn = cg(mKn,vFn)
-
-δ = Vector{Float64}(undef, size(vF))
-δ[uncommitted_and_primary] = δn;
-δ[lower_dofs] = δn[new_primary]
-
+# δ = cg(mK, vF)
 stresses = Matrix{Float64}(undef, 3, length(cells))
 for i in 1:size(connections,2)
     stresses[:, i] = stress(points[:, connections[:,i]], reshape(δ, 2, num^2)[:, connections[:,i]]);
 end
+# points
+elasticity = Vector{Float64}(undef, length(cells));
+for i in 1:size(connections,2)
+    pts = points[:, connections[:,i]];
+    if (all(pts[1, :] .>= (r_bounds[1] - 1e-4)) 
+        && all(pts[1, :] .<= (r_bounds[2] + 1e-4))
+        && all(pts[2, :] .>= (r_bounds[1] - 1e-4))
+        && all(pts[2, :] .<= (r_bounds[2] + 1e-4)))
+        elasticity[i] = Er;
+           # println("!")
+    else
+        elasticity[i] = Em;
+    end
+end
 
-vtk_grid(filename*"2", points, cells) do vtk
+vtk_grid(filename*"penalty", points, cells) do vtk
 
     disps = zeros(3, num^2);
     disps[1:2,:] = reshape(δ, 2, num^2)
     vtk["disps"] = disps;
     vtk["stress"] = stresses;
+    vtk["Young's modulus"] = elasticity
 end
-
-
-
-
-
-# all_dofs = collect(1:10)
-
-# pr_dofs = [3,4]
-# sn_dofs = [1,2]
-
-# un_dofs = remove(all_dofs, [pr_dofs;sn_dofs])
-
-# un_pr_dofs = remove(all_dofs, sn_dofs)
-# pr_new_dofs = findall(in(pr_dofs), un_pr_dofs)
-
-
-# un_new_dofs = findall(in(un_dofs), un_pr_dofs)
