@@ -16,6 +16,7 @@ using Gmsh
 gmsh.initialize()
 gmsh.option.setNumber("Mesh.MeshSizeMax", 3.0) #Максимальный размер элементов внутри всей модели - 3мм
 gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 50)#колличество элементов на 2pi радиан
+gmsh.option.setNumber("Mesh.ElementOrder", 2)#колличество элементов на 2pi радиан
 
 gmsh.model.add("model")
 
@@ -35,6 +36,9 @@ v = gmsh.model.occ.importShapes(path)
 #xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.occ.getBoundingBox(
  #   v[1][1], v[1][2])
 
+
+
+
 gmsh.model.occ.synchronize()
 for plane in gmsh.model.getEntities(2)
     println(gmsh.model.getColor(plane...))
@@ -42,16 +46,21 @@ for plane in gmsh.model.getEntities(2)
 
 end
 
-
-
-colors4 = [gmsh.model.getColor(plane...) for plane in gmsh.model.getEntities(2)]
+#colors4 = [gmsh.model.getColor(plane...) for plane in gmsh.model.getEntities(2)]
+#Поиск граней с заданным цветом
+faces = Dict()
+for plane in gmsh.model.getEntities(2)
+    faces[gmsh.model.getColor(plane...)] = plane[2];
+    # gmsh.model.addPhysicalGroup(2, [plane[2]], -1, "$(plane[2])");
+end
+faces[(100,0,0,255)] #<- returns face_id
 
 d3 = gmsh.model.getEntities(3)
 gmsh.model.addPhysicalGroup(3, [d3[1][2]], -1, "domain")
 
 d2 = gmsh.model.getEntities(2)
-gmsh.model.addPhysicalGroup(2, [d2[1][2]], -1, "louded")
-gmsh.model.addPhysicalGroup(2, [d2[13][2]], -1, "fixed")
+gmsh.model.addPhysicalGroup(2, [faces[(0,100,0,255)]], -1, "loaded")
+gmsh.model.addPhysicalGroup(2, [faces[(100,0,0,255)]], -1, "fixed")
 
 gmsh.model.occ.synchronize()
 
@@ -89,3 +98,58 @@ model = GmshDiscreteModel(msh_file);
 
 vtk_file = "model" |> tcf;
 writevtk(model, vtk_file);
+
+
+##
+
+
+
+
+
+model = GmshDiscreteModel(msh_file);
+
+reffe = ReferenceFE(lagrangian,VectorValue{3,Float64},1) #Как и в предыдущем уроке, мы строим непрерывную интерполяцию Лагранжа первого порядка...
+#...Векторно-значная интерполяция выбирается с помощью "VectorValue".
+
+V = TestFESpace(model,reffe,conformity=:H1,dirichlet_tags = ["fixed"])
+
+g(x) = VectorValue(0.0,  0.0, 0.0) # Граничное условие на левой грани – перемещение 0.
+
+U = TrialFESpace(V, [g]) # Создаем пространство тестовых функций.
+EL_ORDER = 1
+degree = EL_ORDER*2
+Ω = Triangulation(model)
+dΩ = Measure(Ω,degree)
+
+neumanntags = ["loaded"]
+Γ = BoundaryTriangulation(model,tags=neumanntags)
+dΓ = Measure(Γ,degree)
+
+f(x) = VectorValue(0.0, 0.0, 0.10);
+
+const E = 2.1e5
+const ν = 0.3
+const λ = (E*ν)/((1+ν)*(1-2*ν))
+const μ = E/(2*(1+ν))
+
+σ(ε) = λ*tr(ε) + 2*μ*ε
+
+a(u,v) = ∫(ε(v) ⊙ (σ∘ε(u)) )*dΩ
+b(v) = ∫( dot(v, f))*dΓ 
+
+
+op = AffineFEOperator(a,b,U,V)
+x0 = zeros(Float64, num_free_dofs(V))
+uh_lin = FEFunction(U,x0)
+ls = BackslashSolver()
+solver = LinearFESolver(ls)
+
+uh_lin, _ = solve!(uh_lin,solver,op)
+
+res_file = "results_new" |> tcf;
+
+function mises(s)
+    return 0.5 * sqrt((s[1,1] - s[2,2])^2 + (s[2,2] - s[3,3])^2 + (s[3,3] - s[1,1])^2 + 6 * (s[2,3]^2 + s[3,1]^2 + s[1,2]^2))
+end
+
+writevtk(Ω, res_file ,  cellfields=["uh"=>uh_lin,"sigma"=>σ∘ε(uh_lin)])
