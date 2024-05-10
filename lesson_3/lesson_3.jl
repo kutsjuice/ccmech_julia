@@ -15,7 +15,7 @@ using Gmsh
 
 gmsh.initialize()
 gmsh.option.setNumber("Mesh.MeshSizeMax", 3.0) #Максимальный размер элементов внутри всей модели - 3мм
-gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 50)#колличество элементов на 2pi радиан
+gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 30)#колличество элементов на 2pi радиан
 gmsh.option.setNumber("Mesh.ElementOrder", 2)#колличество элементов на 2pi радиан
 
 gmsh.model.add("model")
@@ -83,7 +83,7 @@ gmsh.model.mesh.generate(3)
 msh_file = "lug.msh" |> tcf;
 gmsh.write(msh_file)
 
-# gmsh.fltk.run()
+gmsh.fltk.run()
 
 gmsh.finalize()
 
@@ -97,15 +97,16 @@ vtk_file = "model" |> tcf;
 writevtk(model, vtk_file);
 
 
-##
+
 
 
 
 
 
 model = GmshDiscreteModel(msh_file);
+EL_ORDER = 2
 
-reffe = ReferenceFE(lagrangian,VectorValue{3,Float64},1) #Как и в предыдущем уроке, мы строим непрерывную интерполяцию Лагранжа первого порядка...
+reffe = ReferenceFE(lagrangian,VectorValue{3,Float64},EL_ORDER) #Как и в предыдущем уроке, мы строим непрерывную интерполяцию Лагранжа первого порядка...
 #...Векторно-значная интерполяция выбирается с помощью "VectorValue".
 
 V = TestFESpace(model,reffe,conformity=:H1,dirichlet_tags = ["fixed"])
@@ -113,7 +114,6 @@ V = TestFESpace(model,reffe,conformity=:H1,dirichlet_tags = ["fixed"])
 g(x) = VectorValue(0.0,  0.0, 0.0) # Граничное условие на левой грани – перемещение 0.
 
 U = TrialFESpace(V, [g]) # Создаем пространство тестовых функций.
-EL_ORDER = 1
 degree = EL_ORDER*2
 Ω = Triangulation(model)
 dΩ = Measure(Ω,degree)
@@ -146,7 +146,7 @@ uh_lin, _ = solve!(uh_lin,solver,op)
 res_file = "results_new" |> tcf;
 
 function mises(s)
-    return 0.5 * sqrt((s[1,1] - s[2,2])^2 + (s[2,2] - s[3,3])^2 + (s[3,3] - s[1,1])^2 + 6 * (s[2,3]^2 + s[3,1]^2 + s[1,2]^2))
+    return sqrt(0.5 * ((s[1,1] - s[2,2])^2 + (s[2,2] - s[3,3])^2 + (s[3,3] - s[1,1])^2 + 6 * (s[2,3]^2 + s[3,1]^2 + s[1,2]^2)))
 end
 
-writevtk(Ω, res_file ,  cellfields=["uh"=>uh_lin,"sigma"=>σ∘ε(uh_lin)])
+writevtk(Ω, res_file ,  cellfields=["uh"=>uh_lin,"sigma"=>σ∘ε(uh_lin), "mises" => mises∘σ∘ε(uh_lin)])
