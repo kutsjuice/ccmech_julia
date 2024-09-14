@@ -24,9 +24,9 @@ rect = factory.addRectangle(-0.5, -0.5, 0, 1, 1);
 full_domain = factory.addPlaneSurface([rect])
 
 holes = [];
-for i in 1:10
+for i in 1:20
     xy = rand(2) .- 0.5;;
-    r = 0.1;
+    r = 0.05;
     circle = factory.addCircle(xy[1], xy[2], 0, r);
     inner_loop = factory.addCurveLoop([circle]);
     hole = factory.addPlaneSurface([inner_loop]);
@@ -34,7 +34,7 @@ for i in 1:10
 end
 
 
-diff = factory.cut([(2,full_domain)], holes, -1, true, true)
+diff = factory.cut([(2,full_domain)], holes, -1, false, true)
 
 # println(diff)
 # frag = factory.fragment(diff[0], [(2, Surface2)])    
@@ -48,13 +48,32 @@ diff = factory.cut([(2,full_domain)], holes, -1, true, true)
 #   end
 # end
 # print("  ", main_entities, "\n")
+factory.synchronize()
+
+ent = gmsh.model.occ.getEntities(2)
+gmsh.model.occ.remove(ent[1:2])
 
 gmsh.model.occ.synchronize()
 
-gmsh.model.mesh.generate(2)
+gmsh.option.setNumber("Mesh.MeshSizeMin", 0.01)
+gmsh.option.setNumber("Mesh.MeshSizeMax", 0.02)
+# gmsh.option.setNumber("Mesh.RecombineAll", 1)
+gmsh.option.setNumber("Mesh.Algorithm", 8)
+gmsh.option.setNumber("Mesh.RecombinationAlgorithm", 3) # or 3
+# gmsh.option.setNumber("Mesh.SubdivisionAlgorithm", 1)
 
+gmsh.model.mesh.generate(2)
+gmsh.model.mesh.recombine()
+# gmsh.option.setNumber("Mesh.SubdivisionAlgorithm", 1)
+# gmsh.model.mesh.refine()
+# gmsh.model.mesh.refine()
+
+
+# RecombineMesh
 if !("-nopopup" in ARGS)
     gmsh.fltk.run()
 end
+
+
 
 gmsh.finalize()
