@@ -1,11 +1,14 @@
+
 using Gmsh
 
 gmsh.initialize()
+tcf(filename::String) = (@__DIR__) * "\\" * filename;
 
 
 lc = 5e-2
 
 factory = gmsh.model.occ
+gmsh.model.add("model")
 
 
 # p1 = factory.addPoint(0,0,0, lc);
@@ -50,20 +53,29 @@ diff = factory.cut([(2,full_domain)], holes, -1, false, true)
 # print("  ", main_entities, "\n")
 factory.synchronize()
 
-ent = gmsh.model.occ.getEntities(2)
-gmsh.model.occ.remove(ent[1:2])
+entities = gmsh.model.occ.getEntities(2)
+gmsh.model.occ.remove(entities[1:2])
+
+factory.synchronize()
+
+for dim in 2:2
+    entities = gmsh.model.occ.getEntities(dim)
+    tags = [entity[2] for entity in entities]
+    gmsh.model.addPhysicalGroup(dim, tags, -1, "domain")
+end
 
 gmsh.model.occ.synchronize()
 
 gmsh.option.setNumber("Mesh.MeshSizeMin", 0.01)
-gmsh.option.setNumber("Mesh.MeshSizeMax", 0.02)
+gmsh.option.setNumber("Mesh.MeshSizeMax", 0.05)
 # gmsh.option.setNumber("Mesh.RecombineAll", 1)
 gmsh.option.setNumber("Mesh.Algorithm", 8)
-gmsh.option.setNumber("Mesh.RecombinationAlgorithm", 3) # or 3
+# gmsh.option.setNumber("Mesh.RecombinationAlgorithm", 3) # or 3
 # gmsh.option.setNumber("Mesh.SubdivisionAlgorithm", 1)
+gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 30)
 
 gmsh.model.mesh.generate(2)
-gmsh.model.mesh.recombine()
+# gmsh.model.mesh.recombine()
 # gmsh.option.setNumber("Mesh.SubdivisionAlgorithm", 1)
 # gmsh.model.mesh.refine()
 # gmsh.model.mesh.refine()
@@ -74,6 +86,17 @@ if !("-nopopup" in ARGS)
     gmsh.fltk.run()
 end
 
-
+msh_file = "porous_media.msh" |> tcf;
+print(msh_file)
+gmsh.write(msh_file)
 
 gmsh.finalize()
+
+##
+using Gridap
+using GridapGmsh
+
+model = GmshDiscreteModel(msh_file);
+
+vtk_file = "model" |> tcf;
+writevtk(model, vtk_file);
