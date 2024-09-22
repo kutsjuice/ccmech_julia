@@ -5,5 +5,5 @@ Manifest.toml
 # *.msh
 references
 exam
-lesson_5/lesson_5.ipynb
+# lesson_5/lesson_5.ipynb
 lesson_5/test.jl
