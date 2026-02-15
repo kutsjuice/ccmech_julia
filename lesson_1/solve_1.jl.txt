@@ -1,0 +1,43 @@
+tcf(filename::String) = (@__DIR__) * "\\" * filename;
+import Pkg; Pkg.activate((@__DIR__)*"\\..")
+
+using Gridap
+using GridapGmsh
+
+model = GmshDiscreteModel(name);
+
+vtk_file = "model" |> tcf;
+writevtk(model, vtk_file);
+
+reffe = ReferenceFE(lagrangian,Float64,EL_ORDER)
+V0 = TestFESpace(model,reffe;conformity=:H1, dirichlet_tags = ["fixed"]);
+
+g(x) = 63 # Температура нижней грани
+Ug = TrialFESpace(V0,g)
+
+degree = EL_ORDER*2
+Ω = Triangulation(model)
+dΩ = Measure(Ω,degree)
+
+neumanntags = ["free"]
+Γ = BoundaryTriangulation(model,tags=neumanntags)
+dΓ = Measure(Γ,degree)
+
+T_a = 22;
+α = 20;
+λ = 238;
+
+h(x) = α * T_a;
+
+a(u,v) = ∫(λ * ∇(v)⋅∇(u) )*dΩ + ∫(α*u*v)*dΓ 
+b(v) = ∫( v*h)*dΓ 
+
+op = AffineFEOperator(a,b,Ug,V0)
+
+ls = LUSolver()
+solver = LinearFESolver(ls)
+
+uh = solve(solver,op)
+
+results_file = "results" |> tcf;
+writevtk(Ω,results_file,cellfields=["uh"=>uh])

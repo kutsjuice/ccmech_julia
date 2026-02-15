@@ -1,0 +1,120 @@
+tcf(filename::String) = (@__DIR__) * "\\" * filename;
+
+using Gmsh
+
+# инициализация gmsh
+gmsh.initialize() # инициализация ядра gmsh
+
+gmsh.option.setNumber("General.Terminal", 0); # отключение вывода в терминал логов
+
+ms_max = 1;
+ms_min = 0.1;
+MSFC = 3;
+# порядок элементов
+EL_ORDER = 1
+
+
+#установка параметров gmsh
+
+# gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", MSFC);
+# gmsh.option.setNumber("Mesh.MeshSizeMax", diam/2);
+# gmsh.option.setNumber("Mesh.MeshSizeMin", diam/5);
+gmsh.option.setNumber("Mesh.MaxNumThreads3D", 1);
+gmsh.option.setNumber("Mesh.ElementOrder", EL_ORDER);
+# gmsh.option.setNumber("Mesh.Algorithm3D", 9);
+# gmsh.option.setNumber("Mesh.SubdivisionAlgorithm", 2);
+
+# создание модели
+gmsh.model.add("t4")
+
+# параметры радиатора
+height = 5;
+width = 10;
+rib_th = 1;
+rib_num = 3;
+
+# зазор между ребрами
+sp = (width - rib_num * rib_th) / (rib_num - 1);
+
+# размеро элементов
+Lc1 = 0.3;
+
+
+# создание "фабрики"
+factory = gmsh.model.geo;
+
+# создание угловых узлов
+factory.addPoint(-width/2, 0,       0, Lc1, 1);
+factory.addPoint( width/2, 0,       0, Lc1, 2);
+factory.addPoint( width/2, height,  0, Lc1, 3);
+factory.addPoint(-width/2, height,  0, Lc1, 4);
+
+# создание угловых узлов ребер
+x1 = -width/2 + rib_th;
+x2 = -width/2 + rib_th + sp;
+
+factory.addPoint(x1, height, 0, Lc1, 5);
+factory.addPoint(x1, rib_th, 0, Lc1, 6);
+factory.addPoint(x2, rib_th, 0, Lc1, 7);
+factory.addPoint(x2, height, 0, Lc1, 8);
+
+x1 = -width/2 + 2rib_th + sp;
+x2 = -width/2 + 2rib_th + 2sp;
+
+factory.addPoint(x1, height, 0, Lc1, 9);
+factory.addPoint(x1, rib_th, 0, Lc1, 10);
+factory.addPoint(x2, rib_th, 0, Lc1, 11);
+factory.addPoint(x2, height, 0, Lc1, 12);
+
+
+# for i in 1:(rib_num-1)
+#     p1x = -width/2 + rib_th + (sp + rib_th) * (i - 1);
+#     p2x = p1x;
+#     p3x = p1x + sp;
+#     p4x = p3x;
+
+#     factory.addPoint(p1x, height)
+# end
+
+# обводка контура
+factory.addLine(1, 2, 1);
+factory.addLine(2, 3, 2);
+factory.addLine(1, 4, 3);
+
+for i in 4:11
+    factory.addLine(i, i+1, i);
+end
+factory.addLine(12, 3, 12);
+
+# объявление границ, по которым будут накладыватся граничные условия
+factory.addPhysicalGroup(1, [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], -1, "free");
+factory.addPhysicalGroup(1, [1], -1, "fixed");
+
+factory.synchronize();
+
+# объединение контура
+factory.addCurveLoop([-2, -1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 17);
+
+# создание поверхности внутр контур
+factory.addPlaneSurface([17], 18)
+
+
+factory.synchronize()
+
+# создание группы с поверхностью -> необходимо для генерации геометрии
+factory.addPhysicalGroup(2, [18], -1, "coller");
+
+factory.synchronize()
+
+
+# генерация сетки
+gmsh.model.mesh.generate(2)
+
+# результат пишем в файл geo.msh в папке урока
+name = "geo.msh" |> tcf;
+print(name)
+gmsh.fltk.run()
+gmsh.write(name)
+
+# заканчиваем работу gmsh
+gmsh.finalize()

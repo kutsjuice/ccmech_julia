@@ -180,7 +180,7 @@ gmsh.model.mesh.generate(2)
 #src # if !("-nopopup" in ARGS)
 #src #      gmsh.fltk.run()
 #src # end
-
+gmsh.fltk.run()
 msh_file = "porous_media.msh" |> tcf;
 
 gmsh.write(msh_file)

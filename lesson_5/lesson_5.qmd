@@ -1,0 +1,436 @@
+---
+title: "Гомогенизация пористогого материала"
+subtitle: "Практический урок по использованию Gridap.jl и Gmsh"
+author: "Куц М.С., Прокопов В.С."
+lang: ru
+format:
+  html:
+    code-fold: false
+    code-tools: true
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    fig-width: 8
+    fig-height: 6
+  pdf:
+    code-line-numbers: true
+    documentclass: article
+    geometry: margin=2.5cm
+execute:
+  eval: false
+  echo: true
+  warning: false
+  error: false
+engine: julia
+---
+
+```{julia}
+#| echo: false
+#| output: false
+
+findin(a, b) = a[findall(in(b), a)]
+tcf(filename::String) = (@__DIR__) * "\\" * filename;
+```
+
+## Основные сведения о методе численной гомогенизации
+
+Метод ассимптотической гомогенизации, впервый предложеный Бахваловым (Бахвалов, 1975; Бахвалов и Панасенко, 1989) и получивший развитие в работах Бенсуассана, Лионса и Папаниколау (Бенсуассан, 1978), Санчес-Пеленсии (Санчес-Пеленсия, 1980), Победри (Победря, 1983) и других иследователей, используется для определения эффективных свойств материалов с гетерогенной структурой - пористых, волоконных и композиционных материалов. Подробно с деталями данного метода можно ознакомться в работах (Панасенко, 2008; Соколов, 2010; Кузнецова, 2004; Вазич, 2023; Ньювелл, 2020). 
+
+Основная идея ассмптотической гомогенизации заключается в разделении области решения на два различных уровня: задача микромасштаба с характерным размером области $l$ и задача макромасштаба с характерным размером области $L$, такими что $l\ll L$. На микро-уровне область представлена в виде гетерогенной структуры, свойства компонент которого звестны в явном виде, в то время как на макро-уровне материал считается гомогенным с некоторыми усредненными характеристиками.
+
+В рамках линейной теории упругости, определяющие уравнение для области $\Omega$ с границей  $\partial \Omega$ имеет вид:
+
+\begin{align}
+
+\mathbf{\varepsilon} &= \frac{1}{2}\left(\nabla \mathbf{u} + (\nabla \mathbf{u})^T \right) \\
+
+\mathbf{\sigma} &= {}^{4}{\mathbf{C}}\colon\mathbf{\varepsilon} \\
+
+\nabla\cdot\mathbf{\sigma} &= 0
+
+\end{align}
+
+где $\mathbf{u}$ - вектор перемещений, $\mathbf{\varepsilon}$ и $\mathbf{\sigma}$ - тензоры деформаций и напряжений, ${}^{4}{\mathbf{C}}$ - тензор 4 ранга упругих свойств. Граничные условия состоят из перемещений и поверхностных сил, определенных на внешней границе $\partial \Omega$:
+\begin{align}
+        \mathbf{\sigma} \cdot \mathbf{n} &= \mathbf{T}, \hspace{1cm} \mathbf{x} \in \partial\Omega_T \tag{4}\\
+        \mathbf{u} &= \mathbf{u}_e, \hspace{1cm} \mathbf{x} \in \partial\Omega_u \tag{5}\\
+\end{align}
+
+
+> **_NOTE_**
+>
+> Тут необходимо уточнить переход от микроуровня к макроуровню
+
+Для процедуры гомогенизации мы будем использовать нотацию Фойгта (см. урок 2). Тогда уравнение (2) записанное для макромасштабного уровня примет вид:
+$$
+\mathbf{\sigma}^v_M = \mathbf{C}^v_{\mathrm{eff}} \mathbf{\varepsilon}^v_M \Leftrightarrow
+\left< \mathbf{\sigma}^v_m \right> = \mathbf{C}^v_{\mathrm{eff}} \left< \mathbf{\varepsilon}^v_m \right> \tag{6}
+$$
+
+где $\left< \mathbf{\sigma}^v_m \right> = \frac{1}{V}\int_\Omega \mathbf{\sigma}^v_m \hspace{1pt}d\mathbf{x}$ - осредненные по области $\Omega$ напряжения, $\left< \mathbf{\varepsilon}^v_m \right> = \frac{1}{V}\int_\Omega \mathbf{\varepsilon}^v_m \hspace{1pt}d\mathbf{x}$ - осредненные деформации, а $V$ - объем этой области. 
+
+После процедуры осреднения любое решения системы полученое при различных граничных условиях (4)-(5) должно удовлетворять уравнению (6). Для определения матрицы $C^v_{\mathrm{eff}}$ необходимо решить 6 различных краевых задач, которые могут быть записаны в виде матричного уравнения:
+
+$$
+\left[ 
+    \left< \mathbf{\sigma}^v_{m1} \right> 
+    \left< \mathbf{\sigma}^v_{m2} \right> 
+    \left< \mathbf{\sigma}^v_{m3} \right> 
+    \left< \mathbf{\sigma}^v_{m4} \right> 
+    \left< \mathbf{\sigma}^v_{m5} \right> 
+    \left< \mathbf{\sigma}^v_{m6} \right> 
+\right]
+=
+\mathbf{C}^v_{\mathrm{eff}}
+\left[
+    \left< \mathbf{\varepsilon}^v_{m1} \right>
+    \left< \mathbf{\varepsilon}^v_{m2} \right>
+    \left< \mathbf{\varepsilon}^v_{m3} \right>
+    \left< \mathbf{\varepsilon}^v_{m4} \right>
+    \left< \mathbf{\varepsilon}^v_{m5} \right>
+    \left< \mathbf{\varepsilon}^v_{m6} \right>
+\right] \tag{7}
+$$
+
+или
+
+$$
+\Sigma = \mathbf{C}^v_{\mathrm{eff}} \Epsilon \tag{8}
+$$
+
+Откуда может быть найдена эффективная матрица упругости $\mathbf{C}^v_{\mathrm{eff}}$
+
+$$
+\mathbf{C}^v_{\mathrm{eff}} = \Sigma \Epsilon^{-1} \tag{9}
+$$
+
+## Выбор граничных условий
+
+Из уравнения (9) очевидным образом просматриваются два способа к вычислению эффективного тензора упругости (Hill, 1963; Huet, 1990): поскольку уравнение (9) должно работать для любых наборов граничных условий, удобно выбрать такие случаи, когда либо $\Epsilon = \mathbf{I}$, либо $\Sigma = \mathbf{i}$. В первом подходе используются *Кинематические Однородные Граничные Условия (Kinematic Uniform Boundary Conditions, KUBC)*, во втором - *Статические Однородные Граничные Условия (Static Uniform Boundary Conditions, SUBC)*. 
+
+В результате применения KUBC, эффективная матрица упругости $\mathbf{C}^v_{\mathrm{eff}}$ может быть найдена непосредственно из осредненных компонент напряжений:
+$$
+\Sigma = \mathbf{C}^v_{\mathrm{eff}} \mathbf{I} \Rightarrow \mathbf{C}^v_{\mathrm{eff}} = \Sigma \tag{10}
+$$
+
+Аналогичным образом, в результате применения SUBC может быть найдена эфективная матрица податливости $\mathbf{S}^v_{\mathrm{eff}} = {\mathbf{C}^v_{\mathrm{eff}}}^{-1}$:
+
+$$
+    \mathbf{I} = \mathbf{C}^v_{\mathrm{eff}} \Epsilon \Rightarrow \mathbf{C}^v_{\mathrm{eff}} = \Epsilon^{-1} \Rightarrow \mathbf{S}^v_{\mathrm{eff}} = \Epsilon
+$$
+
+Однако на практике оказывается, что данные два подхода обычно приводят к различным результатам. Это объясняется краевыми эффектами, происходяими на границе, ведь напряженное состояние вблизи границы в этих случаях будет совершенно различным. С этим можно бороться, если увеличить размер расчетной ячейки, однако это приводит к существенному увеличению размерности задачи, поэтому возможно только лишь в определенной мере. В работе (Huet, 1990) показано, что применение KUBC дает несколько завышенные значения эффективных компонент, и напротив - SUBC дает заниженные значения. По мере увеличения элементарной ячейки они будут выходить истинное значение сверху и снизу соответственно.
+
+Более эфективным подходом является применение *Периодических Граничных Условий (Periodic Boundary Conditions, PBC)*, которые позволяют учесть наличие материала с той стороны границы, где он не моделируется. В идеале, такой подход дает гораздо более быструую сходимость даже на самых небольших размерах ячейки. Однако, такой подход не позволяет явным образом моделировать непериодические структуры, например композиты со случайным расположением волокон или пористая среда со стохастически распределенными порами. Поэтому KUBC и SUBC все еще имеют довольно широкое распространение и именно KUBC будет использоваться в данном уроке.
+> **Примечание** 
+>
+> Применению периодических граничных условий будет посвящен следующий урок данного пособия.
+
+### Кинематические граничные условия
+
+Как уже было сказано выше, для задания KUBC необходимо обеспечить что бы матрица осредненных деформаций приняла значение единичной матрицы. Соответственно, необходимо рассмотреть 6 краевых задач - 3 задачи об одноосном растяжении вдоль осей $x$, $y$ и $z$, и 3 задачи о сдвиге в плоскостях $xy$, $yz$ и $zx$.
+
+#### Одноосное расстяжение
+
+Рассмотрим случай одноосного растяжения на примере расстяжения вдоль оси $x$. В этом случае на границе должны выполнятся следующие условия:
+
+\begin{align*}
+\left\{
+\begin{aligned}
+    u_x(\mathbf{x}) &= x, \\
+    u_y(\mathbf{x}) &= 0, \\
+    u_z(\mathbf{x}) &= 0, \\
+\end{aligned}
+\right.
+\hspace{2cm} %\text{для всех }
+     \forall \mathbf{x} \in \partial \Omega.
+\end{align*}
+
+Граничные условия для расттяжения вдоль осей $y$ и $z$ строятся аналогичным образом.
+
+#### Плоский сдвиг
+
+Для моделирования сдвига в плоскости $xy$ должны быть применены следующие граничные условия:
+
+\begin{align*}
+\left\{
+\begin{aligned}
+    u_x(\mathbf{x}) &= \frac{y}{2L_y}, \\
+    u_y(\mathbf{x}) &= \frac{x}{2L_x}, \\
+    u_z(\mathbf{x}) &= 0, \\
+\end{aligned}
+\right.
+\hspace{2cm} %\text{для всех }
+     \forall \mathbf{x} \in \partial \Omega.
+\end{align*}
+
+Аналогичным образом формируются граничные для двух оставшихся случаев сдвига.
+
+> **_NOTE_**
+>
+> Существует и другой подход к определению эффективных свойств, описанный в (Rahali et al., 2015), где расчет идет через энергию деформации 
+> $U = \int_\Omega\left(\mathbf{\varepsilon : \sigma}\right) \partial \mathbf{x}$. 
+> - Так компонента $C_{11} = \frac{2U}{V}$ вычисляется из условий
+> одноосного расстяжения, описанного выше.
+> - Компонента $C_{12}=C_{21} = \left(\frac{2U}{V} - C_{11} - C_{22}\right)/2$ определяется из условий двухосного расстяжения 
+
+$$
+\begin{align*}
+\left\{
+\begin{aligned}
+    u_x(\mathbf{x}) &= x, \\
+    u_y(\mathbf{x}) &= y, \\
+    u_z(\mathbf{x}) &= 0, \\
+\end{aligned}
+\right.
+\end{align*}
+$$
+
+> - И из условий сдвига определяется компонента $C_{44} = \frac{2U}{V}$.
+>
+> Таким образом, всего необходимо решить 9 краевых задач для того что бы определить полную матрицу жесткости. 
+> 
+> Подход описанный раннее в разделе был придуман мной и опубликован в работе (Kuts et al., 2023). В его работоспособности меня заверила моя соавторка Dr.Pania Newell, и вроде бы в беседах на конференции меня тоже заверили что это верно и все так делают. Однако в действительности, опубликованных источников подтверждающих работоспособность данного подхода я не встречал. Как вариант - можно сравнить их в рамках лабораторной работы на ячейках разного масштаба и может быть даже опубликовать результаты.
+
+
+## Построение геометрии
+
+Подключаем gmsh и инциализируем его, после чего моздаем модель и задаем базовый размер репрезентативной ячейки:
+
+```{julia}
+using Gmsh
+
+gmsh.initialize()
+
+factory = gmsh.model.occ
+gmsh.model.add("model")
+
+cell_size = 1;
+```
+
+Исследуемая геометрия чем-то напомнимает сыр и представляет собой прямоугольник с крыглыми отверстиями.
+Для этого создадим прямоугольник размером `cell_size`, затем некоторое количество окружностей, которые в дальнейшем будут вырезаны из прямоугольной области.
+Следует заметить, что булевы операции возможны лишь для 2D или 3D объектов.
+Тут необходимо учесть некоторую особонность построения геометрии в **gmsh** - при создании прямоугольника, будет созданы необходимые отрезки, замкнутый контур и участок поверхности, ограниченный данным контуром.
+В случае же окружностей будут созданы только лишь замкнутые дуги, т.е. 1D объекты.
+Поэтому прежде чем произвести операцию вырезки, необходимо создать контур для каждой окружности (состоящий из одной окружности) и "натянуть" на созданные контура поверхности при помощи функции `addPlaneSurface`.
+
+```{julia}
+rect = factory.addRectangle(-0.5 * cell_size, -0.5 * cell_size, 0, cell_size, cell_size);
+
+
+holes = [];
+
+for i in 1:20
+    xy = rand(2) .- 0.5;;
+    r = 0.05;
+    circle = factory.addCircle(xy[1], xy[2], 0, r);
+    inner_loop = factory.addCurveLoop([circle]);
+    hole = factory.addPlaneSurface([inner_loop]);
+    push!(holes, (2, hole));
+end
+```
+
+Теперь можно удалить созданные кругляши из прямоугольника, воспользовавшись функцией `cut`
+
+```{julia}
+diff = factory.cut([(2, rect)], holes, -1, true, true)
+
+factory.synchronize()
+
+```
+
+В некоторых случаях может оставаться избыточная геометрия, которая будет мешать создать модель.
+Поэтому удалим все 1D объекты, которые не входят в границу нашей ячейки
+
+```{julia}
+
+entities = factory.getEntities(2)
+
+surface_boundary = gmsh.model.getBoundary(entities)
+
+edges_for_leave = [abs(tag[2]) for tag in surface_boundary]
+
+all_edges = [abs(tag[2]) for tag in factory.getEntities(1)]
+
+edges_for_remove = []
+for edge in all_edges
+    if  !(edge in edges_for_leave)
+        push!(edges_for_remove, edge)
+    end
+end
+
+dimtag_for_remove = [(1, tag) for tag in edges_for_remove]
+factory.remove(dimtag_for_remove)
+
+factory.synchronize()
+
+```
+
+Далее необходимо создаnm физические группы для созданной геометрией. Группа для всей геометрии:
+
+```{julia}
+for dim in 0:2
+    entities = gmsh.model.occ.getEntities(dim)
+    tags = [entity[2] for entity in entities]
+    gmsh.model.addPhysicalGroup(dim, tags, -1, "domain")
+end
+```
+
+Далее создаем физические группы для границ.
+Границы можно выделить при помощи инструмента `boundingBox`, что напоминает выделение мышкой на экране прямоугольной области.
+Для начала создадим 4 области, в которые входят боковые границы ячейки:
+
+```{julia}
+eps = cell_size * 1e-4;
+left_boundary_bbox = [
+    (- cell_size/2 - eps),
+    (- cell_size/2 - eps),
+    (- eps),
+    (- cell_size/2 + eps),
+    (+ cell_size/2 + eps),
+    (+ eps)
+]
+right_boundary_bbox = [
+    (+ cell_size/2 - eps),
+    (- cell_size/2 - eps),
+    (- eps),
+    (+ cell_size/2 + eps),
+    (+ cell_size/2 + eps),
+    (+ eps)
+]
+bottom_boundary_bbox = [
+    (- cell_size/2 - eps),
+    (- cell_size/2 - eps),
+    (- eps),
+    (+ cell_size/2 + eps),
+    (- cell_size/2 + eps),
+    (+ eps)
+]
+top_boundary_bbox = [
+    (- cell_size/2 - eps),
+    (+ cell_size/2 - eps),
+    (- eps),
+    (+ cell_size/2 + eps),
+    (+ cell_size/2 + eps),
+    (+ eps)
+]
+
+bounds = [left_boundary_bbox, bottom_boundary_bbox, right_boundary_bbox, top_boundary_bbox]
+```
+
+Далее создадим две физические группы: с узлами (1D объекты) и с ребрами (2D объекты)
+```{julia}
+
+boundary_name = "boundary";
+for dim in 0:1
+    entities = []
+    for bbox in bounds
+        push!(entities, factory.getEntitiesInBoundingBox(bbox..., dim)...)
+    end
+    tags = [entity[2] for entity in entities]
+    gmsh.model.addPhysicalGroup(dim, tags, -1, boundary_name)
+end
+gmsh.model.occ.synchronize()
+```
+
+
+Теперь осталось задать параметры сетки и запустить генерацию сетки, после чего созданная геометрия может быть сохранена в файл
+```{julia}
+gmsh.option.setNumber("Mesh.MeshSizeMin", 0.01)
+gmsh.option.setNumber("Mesh.MeshSizeMax", 0.05)
+gmsh.option.setNumber("Mesh.Algorithm", 8)
+gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 20)
+
+gmsh.model.mesh.generate(2)
+
+msh_file = "porous_media.msh" |> tcf;
+
+gmsh.write(msh_file)
+
+gmsh.finalize()
+```
+
+Теперь необходимо загрузить нашу геометрию при помощи Gridap и
+
+```{julia}
+using Gridap
+using GridapGmsh
+
+model = GmshDiscreteModel(msh_file);
+
+vtk_file = "porous_model" |> tcf;
+```
+
+Зададим основные механические параметры для материала и определим закон для напряжений (закон Гука):
+
+```{julia}
+const E = 70.0e9
+const ν = 0.33
+const λ = (E*ν)/((1+ν)*(1-2*ν))
+const μ = E/(2*(1+ν))
+const ρ = 2.8e3
+σ(ε) = λ*tr(ε)*one(ε) + 2*μ*ε
+```
+
+Задаем пространство тестовых функций. В качестве границы Дирихле укажем границу с тегом `boundary` которую мы создали в **gmsh**
+
+```{julia}
+degree = 2
+Ω = Triangulation(model)
+dΩ = Measure(Ω,degree)
+
+reffe = ReferenceFE(lagrangian, VectorValue{2,Float64}, 1)
+V = TestFESpace(model, reffe,
+    conformity=:H1,
+    dirichlet_tags = [boundary_name]
+)
+```
+
+Теперь нам необходимо решить 3 краевых задач, каждой из которых соответствуют свои граничные условия.
+
+```{julia}
+g1(x) = VectorValue(x[1],  0.0)
+g2(x) = VectorValue(0.0,  x[2])
+g3(x) = VectorValue(x[2]/(2cell_size),  x[1]/(2cell_size))
+
+U1 = TrialFESpace(V, [g1])
+U2 = TrialFESpace(V, [g2])
+U3 = TrialFESpace(V, [g3])
+
+U = [U1, U2, U3]
+```
+
+Слабая постановка для всех трех задач будет одинаковая
+
+```{julia}
+A(u,v) = ∫( ε(v) ⊙ (σ∘ε(u)) )*dΩ
+L(v) = 0;
+```
+
+Теперь решаем все три задачи и сохраняем результат в файл
+
+```{julia}
+res_file = "results_new" |> tcf;
+result = []
+for i in 1:3
+    op = AffineFEOperator(A, L, U[i], V)
+
+    x0 = zeros(Float64, num_free_dofs(V))
+    uh_lin = FEFunction(U[i], x0)
+    ls = LUSolver()
+    solver = LinearFESolver(ls)
+    uh_lin ,_ = solve!(uh_lin,solver,op)
+    push!(result, uh_lin);
+
+end
+writevtk(Ω, res_file ,  cellfields=[
+    "x_tension_displ" => result[1],
+    "y_tension_displ" => result[2],
+    "xy_shear_displ" => result[3],
+    "x_tension_stress"=> σ∘ε(result[1]),
+    "y_tension_stress"=> σ∘ε(result[2]),
+    "xy_shear_stress"=> σ∘ε(result[3]),
+    ]
+)
+```
